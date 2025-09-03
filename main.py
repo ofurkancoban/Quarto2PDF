@@ -160,31 +160,31 @@ class SeleniumMethod:
         return pdf_path if success else None, total_pages
 
 
-# Method 2: Puppeteer-based PDF generation
+# Method 2: Puppeteer-based PDF generation (FIXED VERSION)
 class PuppeteerMethod:
     def __init__(self):
         self.name = "Method 2: Puppeteer PDF Generation"
         self.description = """
-                **Features:**
-                - Uses Puppeteer (headless Chrome) via Node.js
-                - Direct PDF generation with native browser rendering
-                - Advanced content scaling and optimization
-                - Handles lazy-loaded images and MathJax
-                - A3 landscape format with optimized margins
+        **Features:**
+        - Uses Puppeteer (headless Chrome) via Node.js
+        - Direct PDF generation with native browser rendering
+        - Advanced content scaling and optimization
+        - Handles lazy-loaded images and MathJax
+        - A3 landscape format with optimized margins
 
-                **Advantages:**
-                - Smaller file sizes (native PDF)
-                - Better text quality and searchability
-                - Faster processing for large documents
-                - Superior handling of web fonts and CSS
-                - Better print layout optimization
+        **Advantages:**
+        - Smaller file sizes (native PDF)
+        - Better text quality and searchability
+        - Faster processing for large documents
+        - Superior handling of web fonts and CSS
+        - Better print layout optimization
 
-                **Disadvantages:**
-                - Requires Node.js and Puppeteer
-                - Less visual debugging capability
-                - May not handle some complex interactions
-                - Single PDF output (no tab separation)
-                """
+        **Disadvantages:**
+        - Requires Node.js and Puppeteer
+        - Less visual debugging capability
+        - May not handle some complex interactions
+        - Single PDF output (no tab separation)
+        """
 
     def process_file(self, file_path, output_dir, progress_callback=None):
         os.makedirs(output_dir, exist_ok=True)
@@ -194,11 +194,14 @@ class PuppeteerMethod:
         pdf_abs = os.path.abspath(os.path.join(output_dir_abs, "output.pdf"))
         bot_js_path = os.path.abspath(os.path.join(output_dir_abs, "bot.js"))
 
-        # BURAYI AYNIYLA KOPYALA
+        # Updated bot.js with better timeout handling and fallbacks
         bot_js_content = r'''
-// bot.js
+// bot.js — robust Quarto HTML to PDF A3 landscape (FIXED VERSION)
+// Usage: node bot.js input.html output.pdf
+
 const puppeteer = require("puppeteer");
 const path = require("path");
+const fs = require("fs");
 
 const inputFile = process.argv[2];
 const outputFile = process.argv[3];
@@ -208,290 +211,375 @@ if (!inputFile || !outputFile) {
   process.exit(1);
 }
 
-(async () => {
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-web-security",
-      "--allow-file-access-from-files"
-    ]
-  });
+const withTimeout = (p, ms, label) =>
+  Promise.race([
+    p,
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(`[TIMEOUT ${ms}ms] ${label}`)), ms)
+    ),
+  ]);
 
-  const page = await browser.newPage();
+const delay = ms => new Promise(res => setTimeout(res, ms));
 
-  // A3 landscape boyutları ayarladık
-  await page.setViewport({
-    width: 1587, // A3 landscape width at 96 DPI
-    height: 1123,  // A3 landscape height at 96 DPI
-  });
+// Function to find Chrome/Chromium executable
+function findChromePath() {
+  const possiblePaths = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_EXECUTABLE_PATH,
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser", 
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/snap/bin/chromium",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"
+  ];
 
-  const fileUrl = `file:${path.resolve(inputFile)}`;
-
-  await page.goto(fileUrl, {
-    waitUntil: "networkidle0",
-    timeout: 0
-  });
-
-  // 1. Sekmeleri sırayla aç (tabset içindekiler)
-  await page.evaluate(async () => {
-    const delay = ms => new Promise(res => setTimeout(res, ms));
-    const tabsets = document.querySelectorAll('.panel-tabset-tabby');
-    for (const tabset of tabsets) {
-      const tabs = tabset.querySelectorAll('a');
-      for (const tab of tabs) {
-        tab.click();
-        await delay(500);
-      }
+  for (const chromePath of possiblePaths) {
+    if (chromePath && fs.existsSync(chromePath)) {
+      console.log(`Found Chrome at: ${chromePath}`);
+      return chromePath;
     }
-  });
+  }
 
-  // 2. Lazy-load + base64 + role="img" görselleri işleme
-  await page.evaluate(() => {
-    document.querySelectorAll("img").forEach(img => {
-      const dataSrc = img.getAttribute("data-src") || img.getAttribute("data-lazy-src");
-      if (dataSrc) {
-        img.setAttribute("src", dataSrc);
-      }
-    });
-
-    const roleImgs = document.querySelectorAll("img[role='img']");
-    roleImgs.forEach(img => {
-      const dataSrc = img.getAttribute("data-src");
-      if (dataSrc && !img.getAttribute("src")) {
-        img.setAttribute("src", dataSrc);
-      }
-    });
-
-    document.querySelectorAll("img").forEach(img => {
-      img.style.display = "block";
-      img.style.visibility = "visible";
-      img.style.opacity = "1";
-      img.style.height = "auto";
-      img.style.maxWidth = "100%";
-      img.style.objectFit = "contain";
-    });
-  });
-
-  // 3. Tüm görsellerin yüklenmesini bekle
-  await page.evaluate(async () => {
-    const images = Array.from(document.images);
-    await Promise.all(images.map(img => {
-      if (img.complete) return Promise.resolve();
-      return new Promise(resolve => {
-        img.onload = img.onerror = () => resolve();
-      });
-    }));
-  });
-
-  // 4. Sayfanın tamamına scroll yap
-  await autoScroll(page);
-
-  // 5. MathJax varsa render tamamlanmasını bekle
-  await page.evaluate(async () => {
-    if (window.MathJax && MathJax.typesetPromise) {
-      await MathJax.typesetPromise();
-    }
-  });
-
-  // 6. İçeriği sayfalara sığacak şekilde auto-scale et (İyileştirilmiş)
-  await page.evaluate(() => {
-    // A3 landscape boyutları (mm cinsinden margin dahil)
-    const pageWidth = 360; // ~420mm - 16mm margin
-    const pageHeight = 255; // ~297mm - 16mm margin
-
-    // CSS ile sayfa kırılmalarını kontrol et
-    const style = document.createElement('style');
-    style.textContent = `
-      @media print {
-        * {
-          box-sizing: border-box !important;
-        }
-        
-        body {
-          margin: 0 !important;
-          padding: 10px !important;
-          font-size: 8px !important;
-          line-height: 1.3 !important;
-        }
-        
-        li {
-          font-size: 8px !important;
-        }
-        
-        
-        img {
-          max-width: 100% !important;
-          max-height: 100% !important;
-          object-fit: contain !important;
-          page-break-inside: avoid !important;
-        }
-        .slide-logo {
-          max-width: 5% !important;
-          max-height: 5% !important;
-          object-fit: contain !important;
-          page-break-inside: avoid !important;
-        }
-        
-        .header-logo {
-          max-width: 7% !important;
-          max-height: 7% !important;
-          object-fit: contain !important;
-          page-break-inside: avoid !important;
-        }
-        
-        table {
-          font-size: 8px !important;
-          width: 100% !important;
-          page-break-inside: avoid !important;
-          table-layout: fixed !important;
-        }
-        
-        td, th {
-          padding: 2px 4px !important;
-          font-size: 8px !important;
-          word-wrap: break-word !important;
-        }
-        
-        .panel-tabset-tabby [role="tabpanel"] {
-          page-break-after: always !important;
-          page-break-inside: avoid !important;
-          margin-bottom: 10px !important;
-        }
-        
-        h1, h2, h3, h4, h5, h6 {
-          page-break-after: avoid !important;
-          margin-top: 10px !important;
-          margin-bottom: 5px !important;
-        }
-        
-        pre, code {
-          font-size: 7px !important;
-          white-space: pre-wrap !important;
-          word-break: break-word !important;
-          page-break-inside: avoid !important;
-          max-width: 100% !important;
-          overflow-wrap: break-word !important;
-        }
-      }
-    `;
-    document.head.appendChild(style);
-
-    // Her tabpanel için ayrı scaling
-    const panels = document.querySelectorAll('[role="tabpanel"]');
-    panels.forEach((panel, index) => {
-      // Panel'in gerçek boyutunu ölç
-      const rect = panel.getBoundingClientRect();
-      const panelWidth = panel.scrollWidth;
-      const panelHeight = panel.scrollHeight;
-
-      console.log(`Panel ${index}: ${panelWidth}x${panelHeight}`);
-
-      // Scaling faktörlerini hesapla
-      let scaleX = pageWidth / panelWidth;
-      let scaleY = pageHeight / panelHeight;
-
-      // En küçük scale faktörünü kullan (aspect ratio korunur)
-      let scale = Math.min(scaleX, scaleY, 1);
-
-      // Minimum scale sınırı (çok küçültmeyi engelle)
-      scale = Math.max(scale, 0.5); // 0.4'ten 0.3'e düşürdük
-
-      // Transform uygula
-      panel.style.transformOrigin = "top left";
-      panel.style.transform = `scale(${scale})`;
-      panel.style.width = `${100 / scale}%`;
-      panel.style.height = "auto";
-      panel.style.pageBreakAfter = "always";
-      panel.style.marginBottom = "20px";
-      panel.style.overflow = "hidden";
-
-      console.log(`Panel ${index} scaled to: ${scale}`);
-    });
-
-    // Eğer tabpanel yoksa, ana container'ları scale et
-    if (panels.length === 0) {
-      const containers = document.querySelectorAll('main, .content, .container, section');
-      containers.forEach((container, index) => {
-        const containerWidth = container.scrollWidth;
-        const containerHeight = container.scrollHeight;
-
-        let scaleX = pageWidth / containerWidth;
-        let scaleY = pageHeight / containerHeight;
-        let scale = Math.min(scaleX, scaleY, 1);
-        scale = Math.max(scale, 0.5); // 0.4'ten 0.3'e düşürdük
-
-        if (scale < 1) {
-          container.style.transformOrigin = "top left";
-          container.style.transform = `scale(${scale})`;
-          container.style.width = `${100 / scale}%`;
-          container.style.overflow = "hidden";
-        }
-      });
-    }
-
-    // Genel body styling
-    document.body.style.padding = "10px";
-    document.body.style.margin = "0";
-    document.body.style.boxSizing = "border-box";
-  });
-
-  // 7. Scaling işleminden sonra render için bekleme
-  await new Promise(resolve => setTimeout(resolve, 2000));
-
-  // 8. PDF çıktısı al
-  await page.pdf({
-    path: outputFile,
-    format: "A3", // A4'ten A3'e çıkardık
-    printBackground: true,
-    landscape: true,
-    margin: {
-      top: "8mm",  // Margin'leri küçülttük
-      bottom: "8mm",
-      left: "8mm",
-      right: "8mm"
-    },
-    preferCSSPageSize: false,
-    displayHeaderFooter: false
-  });
-
-  console.log(`PDF başarıyla oluşturuldu: ${outputFile}`);
-  await browser.close();
-})();
-
-// Sayfa sonuna kadar scroll eden yardımcı fonksiyon
-async function autoScroll(page) {
-  await page.evaluate(async () => {
-    await new Promise(resolve => {
-      let totalHeight = 0;
-      const distance = 100;
-      const timer = setInterval(() => {
-        const scrollHeight = document.body.scrollHeight;
-        window.scrollBy(0, distance);
-        totalHeight += distance;
-        if (totalHeight >= scrollHeight - window.innerHeight) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 100);
-    });
-  });
-
-  // Scroll işleminden sonra yukarı çık
-  await page.evaluate(() => {
-    window.scrollTo(0, 0);
-  });
+  console.log("Chrome not found in standard locations, trying default...");
+  return undefined; // Let Puppeteer use default
 }
+
+(async () => {
+  const inAbs = path.resolve(inputFile);
+  const outAbs = path.resolve(outputFile);
+  if (!fs.existsSync(inAbs)) {
+    console.error(`Input not found: ${inAbs}`);
+    process.exit(1);
+  }
+
+  const executablePath = findChromePath();
+
+  console.log("[1/9] Launching Chromium…");
+  let browser;
+
+  try {
+    // Try with found executable first
+    const launchOptions = {
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--single-process",
+        "--allow-file-access-from-files",
+        "--enable-local-file-accesses",
+        "--disable-web-security",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+        "--disable-features=TranslateUI",
+        "--disable-ipc-flooding-protection"
+      ],
+      timeout: 60000 // 60 second timeout for browser launch
+    };
+
+    if (executablePath) {
+      launchOptions.executablePath = executablePath;
+    }
+
+    browser = await puppeteer.launch(launchOptions);
+  } catch (error) {
+    console.log("First launch attempt failed, trying fallback...");
+    console.log("Error:", error.message);
+
+    // Fallback: try without custom executable path
+    try {
+      browser = await puppeteer.launch({
+        headless: "new",
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu"
+        ],
+        timeout: 60000
+      });
+    } catch (fallbackError) {
+      console.error("Failed to launch browser even with fallback:");
+      console.error(fallbackError.message);
+      process.exit(1);
+    }
+  }
+
+  try {
+    const page = await browser.newPage();
+
+    // Set longer timeouts
+    page.setDefaultTimeout(120000); // 2 minutes
+    page.setDefaultNavigationTimeout(120000); // 2 minutes
+
+    console.log("[2/9] Set viewport A3 landscape…");
+    await page.setViewport({ width: 1587, height: 1123 });
+
+    const fileUrl = `file://${inAbs}`;
+    console.log(`[3/9] Goto DOMContentLoaded: ${fileUrl}`);
+
+    try {
+      await withTimeout(
+        page.goto(fileUrl, { 
+          waitUntil: "domcontentloaded", 
+          timeout: 120000 
+        }),
+        120000,
+        "page.goto(domcontentloaded)"
+      );
+    } catch (gotoError) {
+      console.error("Failed to load page:", gotoError.message);
+      // Try with networkidle0 as fallback
+      console.log("Trying with networkidle0...");
+      await page.goto(fileUrl, { 
+        waitUntil: "networkidle0", 
+        timeout: 120000 
+      });
+    }
+
+    console.log("[4/9] Wait for fonts (best effort) …");
+    await withTimeout(
+      page.evaluate(() => (document.fonts ? document.fonts.ready : Promise.resolve())),
+      15000,
+      "document.fonts.ready"
+    ).catch(err => {
+      console.log("Font loading timeout (continuing anyway):", err.message);
+    });
+
+    console.log("[5/9] Click through tabsets…");
+    await withTimeout(
+      page.evaluate(async () => {
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
+        const selectors = [
+          "a[role='tab']",
+          ".nav-tabs .nav-link",
+          ".tabset-pills .nav-link",
+          ".panel-tabset .nav-link",
+          "[data-bs-toggle='tab']",
+          "[data-toggle='tab']"
+        ];
+        let clicked = 0;
+        for (const sel of selectors) {
+          const nodes = Array.from(document.querySelectorAll(sel));
+          for (const el of nodes) {
+            try { 
+              el.click(); 
+              clicked++; 
+              await sleep(200); // Reduced delay
+            } catch {}
+          }
+          if (clicked > 0) break;
+        }
+        console.log(`Clicked ${clicked} tabs`);
+      }),
+      15000,
+      "click tabsets"
+    ).catch(err => {
+      console.log("Tab clicking timeout (continuing anyway):", err.message);
+    });
+
+    console.log("[6/9] Normalize lazy images and ensure visibility…");
+    await page.evaluate(() => {
+      document.querySelectorAll("img").forEach(img => {
+        const ds = img.getAttribute("data-src") || img.getAttribute("data-lazy-src");
+        if (ds && !img.getAttribute("src")) img.setAttribute("src", ds);
+        img.style.display = "block";
+        img.style.visibility = "visible";
+        img.style.opacity = "1";
+        img.style.height = "auto";
+        img.style.maxWidth = "100%";
+        img.style.objectFit = "contain";
+      });
+    });
+
+    console.log("[7/9] Wait all images with onerror fallback …");
+    await withTimeout(
+      page.evaluate(async () => {
+        const imgs = Array.from(document.images);
+        const promises = imgs.map(img => {
+          if (img.complete) return Promise.resolve();
+          return new Promise(res => {
+            const timeout = setTimeout(() => res(), 5000); // 5s per image max
+            img.onload = img.onerror = () => {
+              clearTimeout(timeout);
+              res();
+            };
+          });
+        });
+        await Promise.all(promises);
+      }),
+      30000, // Reduced from 45s
+      "images load"
+    ).catch(err => {
+      console.log("Image loading timeout (continuing anyway):", err.message);
+    });
+
+    console.log("[8/9] MathJax typeset best effort …");
+    await withTimeout(
+      page.evaluate(async () => {
+        try {
+          if (window.MathJax && typeof MathJax.typesetPromise === "function") {
+            await MathJax.typesetPromise();
+          }
+        } catch (e) {
+          console.log("MathJax error:", e.message);
+        }
+      }),
+      10000, // Reduced timeout
+      "MathJax typeset"
+    ).catch(err => {
+      console.log("MathJax timeout (continuing anyway):", err.message);
+    });
+
+    console.log("[9/9] Inject print scale and paginate…");
+    await page.evaluate(() => {
+      const pxPerMm = 3.78;
+      const targetWpx = Math.floor((420 - 16 - 16) * pxPerMm);
+      const targetHpx = Math.floor((297 - 8 - 8) * pxPerMm);
+
+      const style = document.createElement("style");
+      style.textContent = `
+        @media print {
+          * { box-sizing: border-box !important; }
+          html, body { margin: 0 !important; padding: 10px !important; font-size: 8px !important; line-height: 1.3 !important; }
+          li { font-size: 8px !important; }
+          img { max-width: 100% !important; object-fit: contain !important; page-break-inside: avoid !important; }
+          table { font-size: 8px !important; width: 100% !important; page-break-inside: avoid !important; table-layout: fixed !important; }
+          td, th { padding: 2px 4px !important; font-size: 8px !important; word-wrap: break-word !important; }
+          pre, code { font-size: 7px !important; white-space: pre-wrap !important; word-break: break-word !important; page-break-inside: avoid !important; }
+          .panel-tabset-tabby [role="tabpanel"] { page-break-after: always !important; page-break-inside: avoid !important; margin-bottom: 10px !important; }
+          h1, h2, h3, h4, h5, h6 { page-break-after: avoid !important; margin-top: 10px !important; margin-bottom: 5px !important; }
+        }`;
+      document.head.appendChild(style);
+
+      const scaleBlock = el => {
+        try {
+          const w = el.scrollWidth || el.clientWidth || 1;
+          const h = el.scrollHeight || el.clientHeight || 1;
+          let s = Math.min(targetWpx / w, targetHpx / h, 1);
+          s = Math.max(s, 0.5);
+          el.style.transformOrigin = "top left";
+          el.style.transform = `scale(${s})`;
+          el.style.width = `${100 / s}%`;
+          el.style.pageBreakAfter = "always";
+          el.style.marginBottom = "20px";
+          el.style.overflow = "hidden";
+        } catch (e) {
+          console.log("Error scaling element:", e.message);
+        }
+      };
+
+      const panels = document.querySelectorAll('[role="tabpanel"]');
+      if (panels.length) {
+        panels.forEach(p => { 
+          try { 
+            p.style.display="block"; 
+            p.style.visibility="visible"; 
+            scaleBlock(p); 
+          } catch (e) {
+            console.log("Error processing panel:", e.message);
+          }
+        });
+      } else {
+        const cont = document.querySelectorAll("main, .content, .container, section");
+        cont.forEach(c => { 
+          try {
+            const w = c.scrollWidth || 1, h = c.scrollHeight || 1;
+            let s = Math.min(targetWpx / w, targetHpx / h, 1);
+            s = Math.max(s, 0.5);
+            if (s < 1) { 
+              c.style.transformOrigin = "top left"; 
+              c.style.transform = `scale(${s})`; 
+              c.style.width = `${100 / s}%`; 
+              c.style.overflow="hidden"; 
+            }
+          } catch (e) {
+            console.log("Error processing container:", e.message);
+          }
+        });
+      }
+
+      document.body.style.padding = "10px";
+      document.body.style.margin = "0";
+      document.body.style.boxSizing = "border-box";
+    });
+
+    await delay(500); // Reduced delay
+
+    // Simplified scrolling
+    await page.evaluate(async () => {
+      return new Promise(resolve => {
+        let totalHeight = 0;
+        const distance = 100;
+        const timer = setInterval(() => {
+          const scrollHeight = document.body.scrollHeight;
+          window.scrollBy(0, distance);
+          totalHeight += distance;
+
+          if(totalHeight >= scrollHeight - window.innerHeight){
+            clearInterval(timer);
+            window.scrollTo(0, 0);
+            resolve();
+          }
+        }, 50);
+
+        // Failsafe timeout
+        setTimeout(() => {
+          clearInterval(timer);
+          window.scrollTo(0, 0);
+          resolve();
+        }, 5000);
+      });
+    });
+
+    console.log("[PDF] Creating file…");
+    await withTimeout(
+      page.pdf({
+        path: outAbs,
+        format: "A3",
+        landscape: true,
+        printBackground: true,
+        margin: { top: "8mm", bottom: "8mm", left: "8mm", right: "8mm" },
+        preferCSSPageSize: false,
+        displayHeaderFooter: false,
+        timeout: 60000 // 60s timeout for PDF generation
+      }),
+      60000,
+      "page.pdf"
+    );
+
+    console.log(`PDF başarıyla oluşturuldu: ${outAbs}`);
+    await browser.close();
+
+  } catch (e) {
+    console.error("Processing error:", e.message);
+    console.error("Stack:", e.stack);
+    try {
+      await browser.close();
+    } catch (closeError) {
+      console.error("Error closing browser:", closeError.message);
+    }
+    process.exit(1);
+  }
+})();
 '''
+
         with open(bot_js_path, 'w', encoding='utf-8') as f:
             f.write(bot_js_content)
 
         try:
+            # Add timeout to subprocess as well
             result = subprocess.run(
                 ['node', bot_js_path, input_abs, pdf_abs],
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=300  # 5 minute timeout for entire process
             )
 
             if progress_callback:
@@ -500,11 +588,17 @@ async function autoScroll(page) {
             if result.returncode == 0 and os.path.exists(pdf_abs):
                 return pdf_abs, 1
             else:
-                st.error(f"Puppeteer hata çıktı kodu {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
+                st.error(f"Puppeteer failed with exit code {result.returncode}")
+                st.error(f"STDOUT:\n{result.stdout}")
+                st.error(f"STDERR:\n{result.stderr}")
                 return None, 0
 
+        except subprocess.TimeoutExpired:
+            st.error(
+                "Puppeteer process timed out after 5 minutes. The HTML file might be too complex or contain issues.")
+            return None, 0
         except Exception as e:
-            st.error(f"Puppeteer çalıştırma hatası: {str(e)}")
+            st.error(f"Error running Puppeteer: {str(e)}")
             return None, 0
 
 
